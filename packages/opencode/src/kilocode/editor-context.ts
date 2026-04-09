@@ -6,36 +6,27 @@ export interface EditorContext {
   timezone?: string
 }
 
-function formatDate(timezone?: string): string[] {
-  const now = new Date()
-  const lines = [`  Today's date: ${now.toDateString()}`]
-  if (timezone) {
-    const offset = -now.getTimezoneOffset()
-    const sign = offset >= 0 ? "+" : "-"
-    const hours = Math.floor(Math.abs(offset) / 60)
-    const mins = Math.abs(offset) % 60
-    lines.push(`  User timezone: ${timezone}, UTC${sign}${hours}:${mins.toString().padStart(2, "0")}`)
-  }
-  return lines
-}
-
 /**
  * Build additional <env> lines from VS Code editor context.
  * Returns an array of pre-formatted `  key: value` strings.
+ *
+ * PATCH 6 — Cache-stable system prompt (upstream: anomalyco/opencode#5224)
+ *
+ * Dynamic content (date/time, activeFile, visibleFiles, openTabs) is stripped
+ * from the system prompt to preserve Anthropic prompt cache prefix stability.
+ * Every change to the system prompt busts the cache and forces full-price
+ * reprocessing of the entire context window. Only static env info is emitted.
+ *
+ * The model already knows the date (training cutoff / API metadata), and
+ * editor state is available via tool results when actually needed.
  */
 export function editorContextEnvLines(ctx?: EditorContext): string[] {
-  const lines = formatDate(ctx?.timezone)
+  const lines: string[] = []
   if (ctx?.shell) {
     lines.push(`  Default shell: ${ctx.shell}`)
   }
-  if (ctx?.activeFile) {
-    lines.push(`  Active file: ${ctx.activeFile}`)
-  }
-  if (ctx?.visibleFiles?.length) {
-    lines.push(`  Visible files: ${ctx.visibleFiles.join(", ")}`)
-  }
-  if (ctx?.openTabs?.length) {
-    lines.push(`  Open tabs: ${ctx.openTabs.join(", ")}`)
+  if (ctx?.timezone) {
+    lines.push(`  User timezone: ${ctx.timezone}`)
   }
   return lines
 }

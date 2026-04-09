@@ -364,6 +364,10 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
           "gpt-5.2-codex",
           "gpt-5.3-codex",
           "gpt-5.1-codex",
+          // PATCH: gpt-5.4 family (released 2026-03-05)
+          "gpt-5.4",
+          "gpt-5.4-pro",
+          "gpt-5.4-codex", // preemptive — may not exist yet
         ])
         for (const modelId of Object.keys(provider.models)) {
           if (modelId.includes("codex")) continue

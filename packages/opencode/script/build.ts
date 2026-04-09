@@ -174,7 +174,7 @@ for (const item of targets) {
       autoloadPackageJson: true,
       target: name.replace(pkg.name, "bun") as any,
       outfile: `dist/${name}/bin/kilo`,
-      execArgv: [`--user-agent=kilo/${Script.version}`, "--use-system-ca", "--"],
+      execArgv: [`--user-agent=kilo/${Script.version}`, "--use-system-ca", "--smol", "--"],
       windows: {},
     },
     entrypoints: ["./src/index.ts", parserWorker, workerPath],
