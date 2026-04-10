@@ -89,6 +89,12 @@ export namespace Config {
     if (target.instructions && source.instructions) {
       merged.instructions = Array.from(new Set([...target.instructions, ...source.instructions]))
     }
+    // PATCH: concat+dedup compaction.protectedTools across config layers
+    if (target.compaction?.protectedTools && source.compaction?.protectedTools) {
+      merged.compaction!.protectedTools = Array.from(
+        new Set([...target.compaction.protectedTools, ...source.compaction.protectedTools]),
+      )
+    }
     return merged
   }
 
@@ -1463,6 +1469,10 @@ export namespace Config {
             .min(0)
             .optional()
             .describe("Token buffer for compaction. Leaves enough window to avoid overflow during compaction."),
+          protectedTools: z
+            .array(z.string())
+            .optional()
+            .describe("Additional tool names to protect from pruning (built-in 'skill' is always protected)"),
         })
         .optional(),
       experimental: z
