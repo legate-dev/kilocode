@@ -11,6 +11,36 @@ import { defer } from "@/util/defer"
 import { Config } from "../config/config"
 import { PermissionNext } from "@/permission/next"
 
+// --- PATCH: Subagent GC relief (bmalloc fragmentation mitigation) ---
+function maybeCollectSubagentGarbage() {
+  try {
+    // Bun.gc(true) forces a synchronous garbage collection pass
+    if (typeof Bun !== "undefined" && typeof Bun.gc === "function") {
+      Bun.gc(true)
+    }
+    // On macOS, release freed malloc zones back to the OS
+    // This counters bmalloc fragmentation that causes RSS to grow monotonically
+    if (process.platform === "darwin") {
+      try {
+        const { dlopen, suffix, ptr, CString } = require("bun:ffi") as any
+        const lib = dlopen(`libSystem.${suffix}`, {
+          malloc_zone_pressure_relief: {
+            args: ["pointer", "usize"],
+            returns: "usize",
+          },
+        })
+        // zone=NULL (0) means all zones, bytes=0 means release everything possible
+        lib.symbols.malloc_zone_pressure_relief(ptr(0), 0)
+      } catch {
+        // FFI not available or failed — not critical
+      }
+    }
+  } catch {
+    // GC not available — not critical
+  }
+}
+// --- END PATCH ---
+
 const parameters = z.object({
   description: z.string().describe("A short (3-5 words) description of the task"),
   prompt: z.string().describe("The task for the agent to perform"),
@@ -157,7 +187,7 @@ export const TaskTool = Tool.define("task", async (ctx) => {
           ...Object.fromEntries((config.experimental?.primary_tools ?? []).map((t) => [t, false])),
         },
         parts: promptParts,
-      })
+      }).finally(maybeCollectSubagentGarbage)
 
       const text = result.parts.findLast((x) => x.type === "text")?.text ?? ""
 
