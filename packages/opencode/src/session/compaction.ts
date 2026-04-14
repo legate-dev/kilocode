@@ -34,7 +34,9 @@ export namespace SessionCompaction {
 
   export const PRUNE_MINIMUM = 20_000
   export const PRUNE_PROTECT = 40_000
-  const PRUNE_PROTECTED_TOOLS = ["skill"]
+  // fork_change: tools whose outputs are never pruned by compaction. Built-in default;
+  // users can extend via opencode.json `compaction.protectedTools` (e.g. MCP-based skill loaders).
+  const PRUNE_PROTECTED_TOOLS_DEFAULT = ["skill"]
 
   export interface Interface {
     readonly isOverflow: (input: {
@@ -94,6 +96,8 @@ export namespace SessionCompaction {
         const cfg = yield* config.get()
         if (cfg.compaction?.prune === false) return
         log.info("pruning")
+        // fork_change: merge configured protectedTools with built-in defaults
+        const pruneProtectedTools = new Set([...PRUNE_PROTECTED_TOOLS_DEFAULT, ...(cfg.compaction?.protectedTools ?? [])])
 
         const msgs = yield* session
           .messages({ sessionID: input.sessionID })
@@ -114,7 +118,7 @@ export namespace SessionCompaction {
             const part = msg.parts[partIndex]
             if (part.type === "tool")
               if (part.state.status === "completed") {
-                if (PRUNE_PROTECTED_TOOLS.includes(part.tool)) continue
+                if (pruneProtectedTools.has(part.tool)) continue // fork_change: was PRUNE_PROTECTED_TOOLS array
                 if (part.state.time.compacted) break loop
                 const estimate = Token.estimate(part.state.output)
                 total += estimate
