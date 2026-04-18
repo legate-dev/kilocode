@@ -156,17 +156,46 @@ export namespace MCP {
   function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?: number): Tool {
     const inputSchema = mcpTool.inputSchema
 
-    // Spread first, then override type to ensure it's always "object"
+    // Build a strict-mode-compatible schema.
+    // GPT-5.x models routed through the OpenAI Responses API (including ChatGPT Codex)
+    // require strict:true on tool definitions to reliably include arguments in function calls.
+    // Strict mode requires: (1) additionalProperties:false, (2) every property key in required[].
+    // Properties absent from the original required[] are made nullable so the model can omit
+    // them semantically by passing null without violating the schema.
+    const originalRequired = new Set<string>(
+      Array.isArray(inputSchema.required) ? (inputSchema.required as string[]) : [],
+    )
+    const rawProperties = inputSchema.properties ?? {}
+    const allKeys = Object.keys(rawProperties)
+
+    const strictProperties: JSONSchema7["properties"] = {}
+    for (const [key, propSchema] of Object.entries(rawProperties)) {
+      const p = propSchema as JSONSchema7
+      if (originalRequired.has(key)) {
+        strictProperties[key] = p
+      } else {
+        // Optional → nullable so the model can pass null when skipping
+        const existingTypes = Array.isArray(p.type) ? (p.type as string[]) : p.type ? [p.type as string] : []
+        strictProperties[key] = existingTypes.includes("null")
+          ? p
+          : { ...p, type: [...existingTypes, "null"] as JSONSchema7["type"] }
+      }
+    }
+
     const schema: JSONSchema7 = {
       ...(inputSchema as JSONSchema7),
       type: "object",
-      properties: (inputSchema.properties ?? {}) as JSONSchema7["properties"],
+      properties: strictProperties,
       additionalProperties: false,
+      ...(allKeys.length > 0 ? { required: allKeys } : {}),
     }
 
     return dynamicTool({
       description: mcpTool.description ?? "",
       inputSchema: jsonSchema(schema),
+      // strict:true tells the OpenAI Responses API to enforce the schema during generation,
+      // which ensures required arguments are always included in function calls.
+      ...(allKeys.length > 0 ? { strict: true } : {}),
       execute: async (args: unknown) => {
         return client.callTool(
           {
@@ -180,7 +209,7 @@ export namespace MCP {
           },
         )
       },
-    })
+    } as Parameters<typeof dynamicTool>[0])
   }
 
   function defs(key: string, client: MCPClient, timeout?: number) {
