@@ -152,50 +152,96 @@ export namespace MCP {
 
   const sanitize = (s: string) => s.replace(/[^a-zA-Z0-9_-]/g, "_")
 
+  // JSON Schema keywords not permitted in OpenAI strict mode.
+  const STRICT_FORBIDDEN_KEYS = new Set([
+    "uniqueItems", "minItems", "maxItems",
+    "pattern", "format",
+    "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf",
+    "minLength", "maxLength",
+    "minProperties", "maxProperties",
+    "$schema",
+  ])
+
+  // Recursively transform a JSON Schema to be OpenAI strict-mode compatible:
+  //   - strip unsupported keywords
+  //   - object types: all property keys → required[], optional ones → nullable, additionalProperties:false
+  //   - recurse into properties, items, anyOf/oneOf/allOf
+  // parentRequired: the required[] of the parent object, used to decide nullable promotion.
+  // propKey: the key under which this node lives in the parent (undefined at top level).
+  function toStrictSchema(node: JSONSchema7, parentRequired: Set<string>, propKey?: string): JSONSchema7 {
+    const out: Record<string, unknown> = {}
+
+    for (const [k, v] of Object.entries(node)) {
+      if (!STRICT_FORBIDDEN_KEYS.has(k)) out[k] = v
+    }
+
+    // If this node is an optional property, promote its type to nullable
+    if (propKey !== undefined && !parentRequired.has(propKey)) {
+      const types = Array.isArray(out.type) ? (out.type as string[]) : out.type ? [out.type as string] : []
+      if (!types.includes("null")) out.type = [...types, "null"]
+    }
+
+    // Recurse into properties, wiring strict-mode requirements on the way back up
+    if (out.properties && typeof out.properties === "object" && !Array.isArray(out.properties)) {
+      const childRequired = new Set<string>(
+        Array.isArray(out.required) ? (out.required as string[]) : [],
+      )
+      const strictProps: Record<string, JSONSchema7> = {}
+      for (const [pk, pv] of Object.entries(out.properties as Record<string, JSONSchema7>)) {
+        strictProps[pk] = toStrictSchema(pv, childRequired, pk)
+      }
+      out.properties = strictProps
+      const propKeys = Object.keys(strictProps)
+      if (propKeys.length > 0) {
+        out.required = propKeys
+        out.additionalProperties = false
+      }
+    }
+
+    // Recurse into array items
+    if (out.items && typeof out.items === "object" && !Array.isArray(out.items)) {
+      out.items = toStrictSchema(out.items as JSONSchema7, new Set(), undefined)
+    }
+
+    // Recurse into combinator branches
+    for (const combinator of ["anyOf", "oneOf", "allOf"] as const) {
+      if (Array.isArray(out[combinator])) {
+        out[combinator] = (out[combinator] as JSONSchema7[]).map((s) => toStrictSchema(s, new Set(), undefined))
+      }
+    }
+
+    return out as JSONSchema7
+  }
+
   // Convert MCP tool definition to AI SDK Tool type
   function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?: number): Tool {
     const inputSchema = mcpTool.inputSchema
 
-    // Build a strict-mode-compatible schema.
-    // GPT-5.x models routed through the OpenAI Responses API (including ChatGPT Codex)
-    // require strict:true on tool definitions to reliably include arguments in function calls.
-    // Strict mode requires: (1) additionalProperties:false, (2) every property key in required[].
-    // Properties absent from the original required[] are made nullable so the model can omit
-    // them semantically by passing null without violating the schema.
+    // Build a strict-mode-compatible schema for the OpenAI Responses API.
+    // GPT-5.x models (including ChatGPT Codex) require strict:true on tool definitions
+    // to reliably include arguments in function calls; without it the model generates {}.
+    // toStrictSchema strips forbidden keywords, makes optional props nullable, and wires
+    // additionalProperties:false + all-keys-required throughout the tree.
     const originalRequired = new Set<string>(
       Array.isArray(inputSchema.required) ? (inputSchema.required as string[]) : [],
     )
-    const rawProperties = inputSchema.properties ?? {}
-    const allKeys = Object.keys(rawProperties)
+    const schema = toStrictSchema(
+      {
+        ...(inputSchema as JSONSchema7),
+        type: "object",
+        properties: (inputSchema.properties ?? {}) as JSONSchema7["properties"],
+        additionalProperties: false,
+      },
+      originalRequired,
+      undefined,
+    )
 
-    const strictProperties: JSONSchema7["properties"] = {}
-    for (const [key, propSchema] of Object.entries(rawProperties)) {
-      const p = propSchema as JSONSchema7
-      if (originalRequired.has(key)) {
-        strictProperties[key] = p
-      } else {
-        // Optional → nullable so the model can pass null when skipping
-        const existingTypes = Array.isArray(p.type) ? (p.type as string[]) : p.type ? [p.type as string] : []
-        strictProperties[key] = existingTypes.includes("null")
-          ? p
-          : { ...p, type: [...existingTypes, "null"] as JSONSchema7["type"] }
-      }
-    }
-
-    const schema: JSONSchema7 = {
-      ...(inputSchema as JSONSchema7),
-      type: "object",
-      properties: strictProperties,
-      additionalProperties: false,
-      ...(allKeys.length > 0 ? { required: allKeys } : {}),
-    }
+    const hasProperties = Object.keys(inputSchema.properties ?? {}).length > 0
 
     return dynamicTool({
       description: mcpTool.description ?? "",
       inputSchema: jsonSchema(schema),
-      // strict:true tells the OpenAI Responses API to enforce the schema during generation,
-      // which ensures required arguments are always included in function calls.
-      ...(allKeys.length > 0 ? { strict: true } : {}),
+      ...(hasProperties ? { strict: true } : {}),
       execute: async (args: unknown) => {
         return client.callTool(
           {
