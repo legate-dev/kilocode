@@ -15,6 +15,43 @@ const CODEX_API_ENDPOINT = "https://chatgpt.com/backend-api/codex/responses"
 const OAUTH_PORT = 1455
 const OAUTH_POLLING_SAFETY_MARGIN_MS = 3000
 
+const CHATGPT_SUBSCRIPTION_LIMIT_ENV = {
+  context: "KILO_CODEX_OAUTH_CONTEXT_LIMIT",
+  input: "KILO_CODEX_OAUTH_INPUT_LIMIT",
+  output: "KILO_CODEX_OAUTH_OUTPUT_LIMIT",
+} as const
+
+const CHATGPT_SUBSCRIPTION_DEFAULT_LIMIT = {
+  context: 400_000,
+  input: 272_000,
+  output: 128_000,
+} as const
+
+function positiveIntFromEnv(name: string, fallback: number) {
+  const value = process.env[name]
+  if (!value) return fallback
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+export function chatgptSubscriptionLimit() {
+  return {
+    context: positiveIntFromEnv(CHATGPT_SUBSCRIPTION_LIMIT_ENV.context, CHATGPT_SUBSCRIPTION_DEFAULT_LIMIT.context),
+    input: positiveIntFromEnv(CHATGPT_SUBSCRIPTION_LIMIT_ENV.input, CHATGPT_SUBSCRIPTION_DEFAULT_LIMIT.input),
+    output: positiveIntFromEnv(CHATGPT_SUBSCRIPTION_LIMIT_ENV.output, CHATGPT_SUBSCRIPTION_DEFAULT_LIMIT.output),
+  }
+}
+
+export function applyCodexOAuthModelLimits(provider: {
+  models: Record<string, { providerID: string; limit: { context: number; input?: number; output: number } }>
+}) {
+  const limit = chatgptSubscriptionLimit()
+  for (const model of Object.values(provider.models)) {
+    if (model.providerID !== "openai") continue
+    model.limit = { ...model.limit, ...limit }
+  }
+}
+
 interface PkceCodes {
   verifier: string
   challenge: string
@@ -389,6 +426,8 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
           if (match && parseFloat(match[1]) > 5.4) continue
           delete provider.models[modelId]
         }
+
+        applyCodexOAuthModelLimits(provider)
 
         // Zero out costs for Codex (included with ChatGPT subscription)
         for (const model of Object.values(provider.models)) {

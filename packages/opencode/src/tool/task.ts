@@ -9,6 +9,7 @@ import { Config } from "../config"
 import { KiloTask } from "../kilocode/tool/task" // kilocode_change
 import { KiloCostPropagation } from "../kilocode/session/cost-propagation" // kilocode_change
 import { Effect, Schema } from "effect"
+import { Log } from "../util"
 
 export interface TaskPromptOps {
   cancel(sessionID: SessionID): void
@@ -17,6 +18,33 @@ export interface TaskPromptOps {
 }
 
 const id = "task"
+const log = Log.create({ service: "task-tool" })
+
+// fork_change start: subagent GC relief (bmalloc fragmentation mitigation, issue #6442)
+function maybeCollectSubagentGarbage() {
+  try {
+    if (typeof Bun !== "undefined" && typeof Bun.gc === "function") {
+      Bun.gc(true)
+    }
+    if (process.platform === "darwin") {
+      try {
+        const { dlopen, suffix, ptr } = require("bun:ffi") as any
+        const lib = dlopen(`libSystem.${suffix}`, {
+          malloc_zone_pressure_relief: {
+            args: ["pointer", "usize"],
+            returns: "usize",
+          },
+        })
+        lib.symbols.malloc_zone_pressure_relief(ptr(0), 0)
+      } catch (err) {
+        log.debug("malloc pressure relief failed", { error: err })
+      }
+    }
+  } catch (err) {
+    log.debug("subagent garbage collection failed", { error: err })
+  }
+}
+// fork_change end
 
 export const Parameters = Schema.Struct({
   description: Schema.String.annotate({ description: "A short (3-5 words) description of the task" }),
@@ -151,22 +179,24 @@ export const TaskTool = Tool.define(
         () =>
           Effect.gen(function* () {
             const parts = yield* ops.resolvePromptParts(params.prompt)
-            const result = yield* ops.prompt({
-              messageID,
-              sessionID: nextSession.id,
-              model: {
-                modelID: model.modelID,
-                providerID: model.providerID,
-              },
-              variant, // kilocode_change
-              agent: next.name,
-              tools: {
-                ...(canTodo ? {} : { todowrite: false }),
-                ...(canTask ? {} : { task: false }),
-                ...Object.fromEntries((cfg.experimental?.primary_tools ?? []).map((item) => [item, false])),
-              },
-              parts,
-            })
+            const result = yield* ops
+              .prompt({
+                messageID,
+                sessionID: nextSession.id,
+                model: {
+                  modelID: model.modelID,
+                  providerID: model.providerID,
+                },
+                variant, // kilocode_change
+                agent: next.name,
+                tools: {
+                  ...(canTodo ? {} : { todowrite: false }),
+                  ...(canTask ? {} : { task: false }),
+                  ...Object.fromEntries((cfg.experimental?.primary_tools ?? []).map((item) => [item, false])),
+                },
+                parts,
+              })
+              .pipe(Effect.ensuring(Effect.sync(maybeCollectSubagentGarbage))) // fork_change: GC + malloc pressure relief on subagent exit
 
             return {
               title: params.description,

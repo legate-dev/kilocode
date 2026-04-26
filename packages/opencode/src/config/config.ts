@@ -59,6 +59,16 @@ function mergeConfigConcatArrays(target: Info, source: Info): Info {
   if (target.instructions && source.instructions) {
     merged.instructions = Array.from(new Set([...target.instructions, ...source.instructions]))
   }
+  // fork_change start: concat compaction.protectedTools across config layers
+  const targetProtected = target.compaction?.protectedTools
+  const sourceProtected = source.compaction?.protectedTools
+  if (targetProtected && sourceProtected) {
+    merged.compaction = {
+      ...merged.compaction,
+      protectedTools: Array.from(new Set([...targetProtected, ...sourceProtected])),
+    }
+  }
+  // fork_change end
   return merged
 }
 
@@ -280,6 +290,11 @@ export const Info = Schema.Struct({
       reserved: Schema.optional(NonNegativeInt).annotate({
         description: "Token buffer for compaction. Leaves enough window to avoid overflow during compaction.",
       }),
+      // fork_change start: extra tools whose outputs are protected from pruning
+      protectedTools: Schema.optional(Schema.mutable(Schema.Array(Schema.String))).annotate({
+        description: "Tool names whose outputs are protected from pruning (built-in 'skill' is always protected)",
+      }),
+      // fork_change end
     }),
   ),
   experimental: Schema.optional(

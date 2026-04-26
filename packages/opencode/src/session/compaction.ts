@@ -33,7 +33,9 @@ export const Event = {
 export const PRUNE_MINIMUM = 20_000
 export const PRUNE_PROTECT = 40_000
 const TOOL_OUTPUT_MAX_CHARS = 2_000
-const PRUNE_PROTECTED_TOOLS = ["skill"]
+// fork_change (P3): tools whose outputs are never pruned by compaction. Built-in default;
+// users can extend via opencode.json `compaction.protectedTools` for MCP-based skill loaders.
+const PRUNE_PROTECTED_TOOLS_DEFAULT = ["skill"]
 const DEFAULT_TAIL_TURNS = 2
 const MIN_PRESERVE_RECENT_TOKENS = 2_000
 const MAX_PRESERVE_RECENT_TOKENS = 8_000
@@ -298,6 +300,8 @@ export const layer: Layer.Layer<
       const cfg = yield* config.get()
       if (!cfg.compaction?.prune) return
       log.info("pruning")
+      // fork_change: merge configured protectedTools with built-in defaults
+      const pruneProtectedTools = new Set([...PRUNE_PROTECTED_TOOLS_DEFAULT, ...(cfg.compaction?.protectedTools ?? [])])
 
       const msgs = yield* session
         .messages({ sessionID: input.sessionID })
@@ -318,7 +322,7 @@ export const layer: Layer.Layer<
           const part = msg.parts[partIndex]
           if (part.type !== "tool") continue
           if (part.state.status !== "completed") continue
-          if (PRUNE_PROTECTED_TOOLS.includes(part.tool)) continue
+          if (pruneProtectedTools.has(part.tool)) continue // fork_change (P3): merged Set of defaults + cfg.compaction.protectedTools
           if (part.state.time.compacted) break loop
           const estimate = Token.estimate(part.state.output)
           total += estimate
