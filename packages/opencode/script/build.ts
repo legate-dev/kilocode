@@ -216,7 +216,7 @@ for (const item of targets) {
       autoloadPackageJson: true,
       target: name.replace(pkg.name, "bun") as any,
       outfile: `dist/${name}/bin/kilo`, // kilocode_change
-      execArgv: [`--user-agent=kilo/${Script.version}`, "--use-system-ca", "--"], // kilocode_change
+      execArgv: [`--user-agent=kilo/${Script.version}`, "--use-system-ca", "--smol", "--"], // kilocode_change // fork_change: --smol for reduced heap baseline
       windows: {},
     },
     files: embeddedFileMap ? { "opencode-web-ui.gen.ts": embeddedFileMap } : {},

@@ -1,15 +1,45 @@
 import { describe, expect, test } from "bun:test"
 import {
+  applyCodexOAuthModelLimits,
+  chatgptSubscriptionLimit,
   parseJwtClaims,
   extractAccountIdFromClaims,
   extractAccountId,
   type IdTokenClaims,
 } from "../../src/plugin/codex"
+import { ModelID, ProviderID } from "../../src/provider/schema"
+import type { Provider } from "../../src/provider"
 
 function createTestJwt(payload: object): string {
   const header = Buffer.from(JSON.stringify({ alg: "none" })).toString("base64url")
   const body = Buffer.from(JSON.stringify(payload)).toString("base64url")
   return `${header}.${body}.sig`
+}
+
+function createOpenAIModel(id: string, limit: Provider.Model["limit"]): Provider.Model {
+  return {
+    id: ModelID.make(id),
+    providerID: ProviderID.make("openai"),
+    name: id,
+    family: "gpt",
+    api: { id, url: "", npm: "@ai-sdk/openai" },
+    status: "active",
+    headers: {},
+    options: {},
+    cost: { input: 1, output: 1, cache: { read: 0, write: 0 } },
+    limit,
+    capabilities: {
+      temperature: false,
+      reasoning: true,
+      attachment: true,
+      toolcall: true,
+      input: { text: true, audio: false, image: true, video: false, pdf: false },
+      output: { text: true, audio: false, image: false, video: false, pdf: false },
+      interleaved: false,
+    },
+    release_date: "",
+    variants: {},
+  }
 }
 
 describe("plugin.codex", () => {
@@ -118,6 +148,36 @@ describe("plugin.codex", () => {
           refresh_token: "rt",
         }),
       ).toBe("acc-123")
+    })
+  })
+
+  describe("ChatGPT subscription limits", () => {
+    test("defaults to the ChatGPT Pro/Plus OAuth input cap", () => {
+      expect(chatgptSubscriptionLimit()).toEqual({ context: 400_000, input: 272_000, output: 128_000 })
+    })
+
+    test("patches OpenAI OAuth models away from API/catalog 1M limits", () => {
+      const provider = {
+        models: {
+          "gpt-5.4": createOpenAIModel("gpt-5.4", { context: 1_050_000, input: 922_000, output: 128_000 }),
+          "gpt-5.5": createOpenAIModel("gpt-5.5", { context: 1_050_000, input: 922_000, output: 128_000 }),
+        },
+      }
+
+      applyCodexOAuthModelLimits(provider)
+
+      expect(provider.models["gpt-5.4"].limit).toEqual({ context: 400_000, input: 272_000, output: 128_000 })
+      expect(provider.models["gpt-5.5"].limit).toEqual({ context: 400_000, input: 272_000, output: 128_000 })
+    })
+
+    test("does not patch non-OpenAI providers", () => {
+      const model = createOpenAIModel("gpt-5.4", { context: 1_050_000, input: 922_000, output: 128_000 })
+      model.providerID = ProviderID.make("openrouter")
+      const provider = { models: { "openai/gpt-5.4": model } }
+
+      applyCodexOAuthModelLimits(provider)
+
+      expect(provider.models["openai/gpt-5.4"].limit).toEqual({ context: 1_050_000, input: 922_000, output: 128_000 })
     })
   })
 })

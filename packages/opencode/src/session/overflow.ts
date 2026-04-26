@@ -13,10 +13,13 @@ export function isOverflow(input: { cfg: Config.Info; tokens: MessageV2.Assistan
   const count =
     input.tokens.total || input.tokens.input + input.tokens.output + input.tokens.cache.read + input.tokens.cache.write
 
-  const reserved =
-    input.cfg.compaction?.reserved ?? Math.min(COMPACTION_BUFFER, ProviderTransform.maxOutputTokens(input.model))
-  const usable = input.model.limit.input
-    ? input.model.limit.input - reserved
-    : context - ProviderTransform.maxOutputTokens(input.model)
+  const output = ProviderTransform.maxOutputTokens(input.model)
+  const reserved = input.cfg.compaction?.reserved ?? Math.min(COMPACTION_BUFFER, output)
+  const inputLimit = input.model.limit.input
+  const usable = inputLimit
+    ? inputLimit >= context
+      ? context - output
+      : inputLimit - reserved
+    : context - output
   return count >= usable
 }
