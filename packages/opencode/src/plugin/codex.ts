@@ -23,21 +23,27 @@ const CHATGPT_SUBSCRIPTION_LIMIT_ENV = {
 
 // Patch 4 — ChatGPT subscription (OAuth) caps for OpenAI models.
 //
-// `input: 272_000` is the REAL hard cap — over this the Codex backend returns HTTP 400
-// "Input tokens exceed the configured limit of 272,000 tokens". No soft cap, no 2x pricing
-// tier above 272k via OAuth. The 1M context window exists only via API key (sk-...).
-// See openai/codex#19464 (feature request to allow 1M in Codex, still open).
+// `input: 258_000` is the OPERATIONAL cap. OpenAI documents 272k as the input limit
+// over OAuth, and the Codex backend returns HTTP 400 "Input tokens exceed the configured
+// limit of 272,000 tokens" above it — but the Codex client itself reserves ~5%
+// internally, so the true ceiling visible at request time is ~258.4k. We pick 258k
+// to match what the backend actually accepts with a safety margin; this lets
+// `isOverflow()` trigger early enough that auto-compact has room to converge before
+// the 3-retry limit (`MAX_COMPACTION_ATTEMPTS` in kilocode/session/prompt.ts).
+// Critical for subagents — they cannot run `/compact` manually if compaction exhausts.
+// No soft cap or 2x pricing tier exists above 272k via OAuth. The 1M context window
+// is API-key (sk-...) only — see openai/codex#19464 (still open).
 //
-// `context: 400_000` is OpenAI marketing arithmetic (272k input + 128k output). It is NOT
-// a real cap — it exists here only so `usable()` in session/overflow.ts takes the correct
-// branch: `inputLimit (272k) >= context (272k)` would evaluate true and incorrectly fall
-// back to `context - output = 144k usable`. Keeping `context > input` makes the comparison
-// false and yields `usable = inputLimit - reserved = ~242k`.
+// `context: 400_000` is OpenAI marketing arithmetic (272k input + 128k output summed).
+// It is NOT a real cap — it exists here only so `usable()` in session/overflow.ts takes
+// the correct branch: `inputLimit (258k) >= context (258k)` would evaluate true and
+// incorrectly fall back to `context - output = 130k usable`. Keeping `context > input`
+// makes the comparison false and yields `usable = inputLimit - reserved`.
 //
 // `output: 128_000` is the real max_output_tokens for OAuth Codex.
 const CHATGPT_SUBSCRIPTION_DEFAULT_LIMIT = {
   context: 400_000,
-  input: 272_000,
+  input: 258_000,
   output: 128_000,
 } as const
 

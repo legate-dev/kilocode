@@ -153,7 +153,9 @@ describe("plugin.codex", () => {
 
   describe("ChatGPT subscription limits", () => {
     test("defaults to the ChatGPT Pro/Plus OAuth input cap", () => {
-      expect(chatgptSubscriptionLimit()).toEqual({ context: 400_000, input: 272_000, output: 128_000 })
+      // 258_000 = OpenAI documented 272k input minus the ~5% Codex client reserves internally.
+      // See inline comment on CHATGPT_SUBSCRIPTION_DEFAULT_LIMIT in plugin/codex.ts.
+      expect(chatgptSubscriptionLimit()).toEqual({ context: 400_000, input: 258_000, output: 128_000 })
     })
 
     test("patches OpenAI OAuth models away from API/catalog 1M limits", () => {
@@ -166,8 +168,8 @@ describe("plugin.codex", () => {
 
       applyCodexOAuthModelLimits(provider)
 
-      expect(provider.models["gpt-5.4"].limit).toEqual({ context: 400_000, input: 272_000, output: 128_000 })
-      expect(provider.models["gpt-5.5"].limit).toEqual({ context: 400_000, input: 272_000, output: 128_000 })
+      expect(provider.models["gpt-5.4"].limit).toEqual({ context: 400_000, input: 258_000, output: 128_000 })
+      expect(provider.models["gpt-5.5"].limit).toEqual({ context: 400_000, input: 258_000, output: 128_000 })
     })
 
     test("does not patch non-OpenAI providers", () => {
