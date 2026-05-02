@@ -21,6 +21,20 @@ const CHATGPT_SUBSCRIPTION_LIMIT_ENV = {
   output: "KILO_CODEX_OAUTH_OUTPUT_LIMIT",
 } as const
 
+// Patch 4 — ChatGPT subscription (OAuth) caps for OpenAI models.
+//
+// `input: 272_000` is the REAL hard cap — over this the Codex backend returns HTTP 400
+// "Input tokens exceed the configured limit of 272,000 tokens". No soft cap, no 2x pricing
+// tier above 272k via OAuth. The 1M context window exists only via API key (sk-...).
+// See openai/codex#19464 (feature request to allow 1M in Codex, still open).
+//
+// `context: 400_000` is OpenAI marketing arithmetic (272k input + 128k output). It is NOT
+// a real cap — it exists here only so `usable()` in session/overflow.ts takes the correct
+// branch: `inputLimit (272k) >= context (272k)` would evaluate true and incorrectly fall
+// back to `context - output = 144k usable`. Keeping `context > input` makes the comparison
+// false and yields `usable = inputLimit - reserved = ~242k`.
+//
+// `output: 128_000` is the real max_output_tokens for OAuth Codex.
 const CHATGPT_SUBSCRIPTION_DEFAULT_LIMIT = {
   context: 400_000,
   input: 272_000,
